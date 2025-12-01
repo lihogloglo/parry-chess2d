@@ -53,6 +53,8 @@ export default class GameScene extends Phaser.Scene {
         this.isPlayerTurn = true;
         this.isProcessing = false;
         this.inCombat = false;
+        this.inPromotion = false;
+        this.gameOver = false;
 
         // Setup input
         this.setupInput();
@@ -65,7 +67,13 @@ export default class GameScene extends Phaser.Scene {
 
     setupInput() {
         this.input.on('pointerdown', (pointer) => {
-            if (this.isProcessing || !this.isPlayerTurn || this.inCombat) return;
+            // Handle parry on tap/click during combat (mobile-friendly)
+            if (this.inCombat && this.combatSystem && this.combatSystem.isPlayerDefending) {
+                this.combatSystem.attemptParry();
+                return;
+            }
+
+            if (this.gameOver || this.isProcessing || !this.isPlayerTurn || this.inCombat || this.inPromotion) return;
 
             const square = this.board.getSquareFromPointer(pointer);
             if (!square) return;
@@ -73,7 +81,7 @@ export default class GameScene extends Phaser.Scene {
             this.handleSquareClick(square.row, square.col);
         });
 
-        // Parry input (spacebar) - only when player is defending
+        // Parry input (spacebar) - only when player is defending (desktop)
         this.input.keyboard.on('keydown-SPACE', () => {
             if (this.inCombat && this.combatSystem && this.combatSystem.isPlayerDefending) {
                 this.combatSystem.attemptParry();
@@ -143,19 +151,50 @@ export default class GameScene extends Phaser.Scene {
 
         // Handle en passant capture (captured pawn is not on target square)
         if (specialMove.type === 'enPassant') {
+            // Move first, then remove the captured pawn for visual consistency
+            await this.performMove(piece, toRow, toCol);
             const enPassantPawn = this.board.getPieceAt(specialMove.capturedPawnRow, toCol);
             if (enPassantPawn) {
                 // En passant doesn't trigger combat - it's a surprise attack!
                 capturedPiece = enPassantPawn;
                 this.board.removePiece(enPassantPawn);
             }
-            await this.performMove(piece, toRow, toCol);
         }
         // Check for regular capture
         else if (targetPiece && targetPiece.color !== piece.color) {
             // Player attacking AI piece - AI defends
             const combatResult = await this.initiateCombat(piece, targetPiece, false);
-            capturedPiece = await this.resolveCombat(combatResult, piece, targetPiece, toRow, toCol);
+            const result = await this.resolveCombat(combatResult, piece, targetPiece, toRow, toCol);
+            capturedPiece = result.capturedPiece;
+
+            // If move was blocked (defender survived or counter-attacked), sync board state and end turn
+            if (result.moveBlocked) {
+                this.gameState.syncChessJsWithBoard();
+                this.gameState.completeMove({ capturedPiece });
+
+                if (capturedPiece) {
+                    this.soundManager.playCapture();
+                }
+
+                this.updateTurnIndicator();
+                this.board.updateCapturedPieces(this.gameState.capturedPieces);
+
+                if (this.gameState.isGameOver()) {
+                    this.handleGameOver();
+                    return;
+                }
+
+                // AI turn
+                if (this.gameState.currentPlayer === 'black') {
+                    this.isPlayerTurn = false;
+                    await this.executeAITurn();
+                } else {
+                    this.isPlayerTurn = true;
+                }
+
+                this.isProcessing = false;
+                return;
+            }
         } else {
             // Regular move
             await this.performMove(piece, toRow, toCol);
@@ -264,6 +303,9 @@ export default class GameScene extends Phaser.Scene {
      * Show promotion dialog and return player's choice
      */
     showPromotionDialog(piece) {
+        // Pause the game while promotion dialog is open
+        this.inPromotion = true;
+
         return new Promise((resolve) => {
             const width = this.cameras.main.width;
             const height = this.cameras.main.height;
@@ -309,6 +351,8 @@ export default class GameScene extends Phaser.Scene {
                         b.bg.destroy();
                         b.sprite.destroy();
                     });
+                    // Resume the game
+                    this.inPromotion = false;
                     resolve(type);
                 });
 
@@ -335,9 +379,11 @@ export default class GameScene extends Phaser.Scene {
 
     /**
      * Resolve combat result and update board
+     * @returns {Object} { capturedPiece, moveBlocked } - moveBlocked is true if attacker failed to capture
      */
     async resolveCombat(combatResult, attacker, defender, toRow, toCol) {
         let capturedPiece = null;
+        let moveBlocked = false;
 
         // Clear move highlights after combat ends
         this.board.clearHighlights();
@@ -362,13 +408,14 @@ export default class GameScene extends Phaser.Scene {
                 yoyo: true,
                 repeat: 2
             });
+            moveBlocked = true;
         } else {
             // Defender survives - attacker doesn't move to that square
-            // Move back or stay in place
             this.updateStatusText('Attack blocked!');
+            moveBlocked = true;
         }
 
-        return capturedPiece;
+        return { capturedPiece, moveBlocked };
     }
 
     async performMove(piece, toRow, toCol) {
@@ -434,18 +481,38 @@ export default class GameScene extends Phaser.Scene {
 
         // Handle en passant capture
         if (specialMove.type === 'enPassant') {
+            // Move first, then remove the captured pawn for visual consistency
+            await this.performMove(piece, to.row, to.col);
             const enPassantPawn = this.board.getPieceAt(specialMove.capturedPawnRow, to.col);
             if (enPassantPawn) {
                 capturedPiece = enPassantPawn;
                 this.board.removePiece(enPassantPawn);
             }
-            await this.performMove(piece, to.row, to.col);
         }
         // Regular capture
         else if (targetPiece && targetPiece.color !== piece.color) {
             // AI attacking player's piece - player defends!
             const combatResult = await this.initiateCombat(piece, targetPiece, true);
-            capturedPiece = await this.resolveCombat(combatResult, piece, targetPiece, to.row, to.col);
+            const result = await this.resolveCombat(combatResult, piece, targetPiece, to.row, to.col);
+            capturedPiece = result.capturedPiece;
+
+            // If move was blocked (defender survived or counter-attacked), sync board state and end turn
+            if (result.moveBlocked) {
+                this.gameState.syncChessJsWithBoard();
+                this.gameState.completeMove({ capturedPiece });
+                if (capturedPiece) {
+                    this.soundManager.playCapture();
+                }
+                this.updateTurnIndicator();
+                this.board.updateCapturedPieces(this.gameState.capturedPieces);
+                if (this.gameState.isGameOver()) {
+                    this.handleGameOver();
+                    return;
+                }
+                this.isPlayerTurn = true;
+                this.updateStatusText('Your turn');
+                return;
+            }
         } else {
             await this.performMove(piece, to.row, to.col);
         }
@@ -543,20 +610,34 @@ export default class GameScene extends Phaser.Scene {
     }
 
     handleGameOver() {
-        let message = '';
-        let playerWon = false;
+        // Stop the game completely
+        this.isProcessing = true;
+        this.isPlayerTurn = false;
+        this.gameOver = true;
+
+        let titleText = '';
+        let subtitleText = '';
+        let titleColor = '#ffffff';
+        let playerWon = null;
 
         if (this.gameState.isCheckmate('white')) {
-            message = 'Checkmate! Black wins!';
-            playerWon = false; // Player is white, so they lost
+            titleText = 'DEFEAT';
+            subtitleText = 'Checkmate - Black wins';
+            titleColor = '#ff4444';
+            playerWon = false;
         } else if (this.gameState.isCheckmate('black')) {
-            message = 'Checkmate! White wins!';
-            playerWon = true; // Player is white, so they won
+            titleText = 'VICTORY';
+            subtitleText = 'Checkmate - White wins';
+            titleColor = '#ffd700';
+            playerWon = true;
         } else if (this.gameState.isStalemate()) {
-            message = 'Stalemate! Draw!';
-            playerWon = null; // Draw - no winner
+            titleText = 'DRAW';
+            subtitleText = 'Stalemate';
+            titleColor = '#888888';
+            playerWon = null;
         } else {
-            message = 'Game Over!';
+            titleText = 'GAME OVER';
+            subtitleText = '';
         }
 
         // Play victory or defeat sound
@@ -570,21 +651,57 @@ export default class GameScene extends Phaser.Scene {
         const width = this.cameras.main.width;
         const height = this.cameras.main.height;
 
-        this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.7);
+        // Dark overlay
+        const overlay = this.add.rectangle(width / 2, height / 2, width, height, 0x000000, 0.85);
+        overlay.setDepth(100);
 
-        this.add.text(width / 2, height / 2 - 30, message, {
-            font: 'bold 32px monospace',
-            color: '#ffffff'
-        }).setOrigin(0.5);
+        // Main title (VICTORY / DEFEAT / DRAW)
+        const title = this.add.text(width / 2, height / 2 - 60, titleText, {
+            font: 'bold 48px monospace',
+            color: titleColor
+        }).setOrigin(0.5).setDepth(101);
 
-        const restartBtn = this.add.text(width / 2, height / 2 + 40, '[ Play Again ]', {
+        // Subtitle
+        if (subtitleText) {
+            this.add.text(width / 2, height / 2 - 10, subtitleText, {
+                font: '18px monospace',
+                color: '#aaaaaa'
+            }).setOrigin(0.5).setDepth(101);
+        }
+
+        // Play Again button
+        const playAgainBtn = this.add.text(width / 2, height / 2 + 50, '[ Play Again ]', {
             font: '20px monospace',
             color: '#c9a959'
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(101);
 
-        restartBtn.on('pointerdown', () => {
+        playAgainBtn.on('pointerover', () => playAgainBtn.setColor('#ffffff'));
+        playAgainBtn.on('pointerout', () => playAgainBtn.setColor('#c9a959'));
+        playAgainBtn.on('pointerdown', () => {
             this.ai.dispose();
             this.scene.restart();
+        });
+
+        // Return to Menu button
+        const menuBtn = this.add.text(width / 2, height / 2 + 90, '[ Main Menu ]', {
+            font: '16px monospace',
+            color: '#666666'
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true }).setDepth(101);
+
+        menuBtn.on('pointerover', () => menuBtn.setColor('#ffffff'));
+        menuBtn.on('pointerout', () => menuBtn.setColor('#666666'));
+        menuBtn.on('pointerdown', () => {
+            this.ai.dispose();
+            this.scene.start('MenuScene');
+        });
+
+        // Animate the title
+        this.tweens.add({
+            targets: title,
+            scale: { from: 0.5, to: 1 },
+            alpha: { from: 0, to: 1 },
+            duration: 500,
+            ease: 'Back.easeOut'
         });
     }
 }

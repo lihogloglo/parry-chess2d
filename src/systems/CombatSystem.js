@@ -58,6 +58,20 @@ export class CombatSystem {
      */
     startCombat(attacker, defender, isPlayerDefending) {
         return new Promise((resolve) => {
+            // King cannot be parried - attacker always wins instantly
+            // (You can't counter-attack a king, checkmate is the only way to win)
+            if (attacker.type === 'king') {
+                resolve({
+                    result: 'attacker_wins',
+                    attacker,
+                    defender,
+                    attackerWins: true,
+                    defenderWins: false,
+                    defenderSurvives: false
+                });
+                return;
+            }
+
             this.inCombat = true;
             this.attacker = attacker;
             this.defender = defender;
@@ -104,7 +118,7 @@ export class CombatSystem {
         // Parry instruction (only for player)
         if (this.isPlayerDefending) {
             this.parryHint = this.scene.add.text(width / 2, height - 60,
-                'Press SPACE to parry!', {
+                'TAP or press SPACE to parry!', {
                 font: '18px monospace',
                 color: '#ffff00'
             }).setOrigin(0.5).setDepth(11);

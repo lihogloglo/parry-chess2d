@@ -12,7 +12,10 @@
       "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\\pieces\")",
       "Bash(dir /b /s 'd:\\Gamedev\\Sekiro chess')",
       "Bash(findstr:*)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(tree:*)",
+      "Bash(copy:*)",
+      "Bash(cp:*)"
     ],
     "deny": [],
     "ask": []
