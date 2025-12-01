@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cat:*)",
+      "Bash(npm install:*)",
+      "Bash(npm pkg:*)",
+      "Bash(npm run build:*)",
+      "Bash(dir /b /s \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\assets\")",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\")",
+      "Bash(dir /b /s \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\")",
+      "Bash(dir /b /s \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\")",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\\pieces\")",
+      "Bash(dir /b /s 'd:\\Gamedev\\Sekiro chess')",
+      "Bash(findstr:*)",
+      "Bash(Select-Object -ExpandProperty FullName)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

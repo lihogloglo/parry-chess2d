@@ -1,0 +1,31 @@
+{
+  "name": "parry-chess2d",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lihogloglo/parry-chess2d.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/lihogloglo/parry-chess2d/issues"
+  },
+  "homepage": "https://github.com/lihogloglo/parry-chess2d#readme",
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "phaser": "^3.90.0",
+    "stockfish.js": "^10.0.2"
+  },
+  "devDependencies": {
+    "vite": "^7.2.6"
+  },
+  "type": "module"
+}
