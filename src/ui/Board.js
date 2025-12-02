@@ -5,12 +5,13 @@ import { POSTURE_LIMITS } from '../data/CombatData.js';
  * Board - 2D Chess board rendering and piece management
  */
 export class Board {
-    constructor(scene, x, y, size) {
+    constructor(scene, x, y, size, options = {}) {
         this.scene = scene;
         this.x = x;
         this.y = y;
         this.size = size;
         this.squareSize = size / 8;
+        this.showCapturedPanels = options.showCapturedPanels !== false; // default true
 
         // Colors
         this.lightColor = 0xF0D9B5;  // Light squares
@@ -38,37 +39,41 @@ export class Board {
         this.capturedSprites = { white: [], black: [] };
 
         this.createBoard();
-        this.createCapturedPanels();
+        if (this.showCapturedPanels) {
+            this.createCapturedPanels();
+        }
         this.setupInitialPosition();
     }
 
     createCapturedPanels() {
         const panelWidth = this.size;
-        const panelHeight = 40;
-        const capturedPieceSize = this.squareSize * 0.5;
+        const panelHeight = 25;
+        const capturedPieceSize = this.squareSize * 0.4;
 
         // Top panel - pieces captured BY black (white pieces lost)
-        const topPanelX = this.x + this.size / 2;
-        const topPanelY = this.y - panelHeight / 2 - 5;
+        // Position it above the board with more gap (higher up)
+        const topPanelX = this.x;
+        const topPanelY = this.y - panelHeight - 25;
 
         this.capturedContainerTop.setPosition(topPanelX, topPanelY);
 
-        // Label for top panel
-        const topLabel = this.scene.add.text(-panelWidth / 2 + 5, 0, 'BLACK:', {
-            font: '11px monospace',
+        // Label for top panel (left-aligned at container origin)
+        const topLabel = this.scene.add.text(0, panelHeight / 2, 'BLACK:', {
+            font: '10px monospace',
             color: '#888888'
         }).setOrigin(0, 0.5);
         this.capturedContainerTop.add(topLabel);
 
         // Bottom panel - pieces captured BY white (black pieces lost)
-        const bottomPanelX = this.x + this.size / 2;
-        const bottomPanelY = this.y + this.size + panelHeight / 2 + 5;
+        // Position it below the board with more gap (lower down)
+        const bottomPanelX = this.x;
+        const bottomPanelY = this.y + this.size + 25;
 
         this.capturedContainerBottom.setPosition(bottomPanelX, bottomPanelY);
 
-        // Label for bottom panel
-        const bottomLabel = this.scene.add.text(-panelWidth / 2 + 5, 0, 'WHITE:', {
-            font: '11px monospace',
+        // Label for bottom panel (left-aligned at container origin)
+        const bottomLabel = this.scene.add.text(0, panelHeight / 2, 'WHITE:', {
+            font: '10px monospace',
             color: '#888888'
         }).setOrigin(0, 0.5);
         this.capturedContainerBottom.add(bottomLabel);
@@ -76,27 +81,33 @@ export class Board {
         // Store size for later use
         this.capturedPieceSize = capturedPieceSize;
         this.capturedPanelWidth = panelWidth;
-        this.labelOffset = 55; // Space after label for pieces
+        this.capturedPanelHeight = panelHeight;
+        this.labelOffset = 50; // Space after label for pieces
     }
 
     updateCapturedPieces(capturedPieces) {
+        // Skip if captured panels are disabled
+        if (!this.showCapturedPanels) return;
+
         // Clear existing captured piece sprites
         this.capturedSprites.white.forEach(s => s.destroy());
         this.capturedSprites.black.forEach(s => s.destroy());
         this.capturedSprites = { white: [], black: [] };
 
-        const startX = -this.capturedPanelWidth / 2 + this.labelOffset;
-        const spacing = this.capturedPieceSize + 3;
+        const startX = this.labelOffset;
+        const spacing = this.capturedPieceSize + 2;
+        const yPos = this.capturedPanelHeight / 2;
 
         // Pieces captured by white (black pieces) - bottom panel
         capturedPieces.white.forEach((pieceType, index) => {
             const x = startX + index * spacing;
 
             const assetKey = `B_${pieceType.charAt(0).toUpperCase() + pieceType.slice(1)}`;
-            const sprite = this.scene.add.image(x, 0, assetKey);
+            const sprite = this.scene.add.image(x, yPos, assetKey);
             const scale = this.capturedPieceSize / sprite.width;
             sprite.setScale(scale);
             sprite.setAlpha(0.9);
+            sprite.setOrigin(0, 0.5);
 
             this.capturedContainerBottom.add(sprite);
             this.capturedSprites.white.push(sprite);
@@ -107,10 +118,11 @@ export class Board {
             const x = startX + index * spacing;
 
             const assetKey = `W_${pieceType.charAt(0).toUpperCase() + pieceType.slice(1)}`;
-            const sprite = this.scene.add.image(x, 0, assetKey);
+            const sprite = this.scene.add.image(x, yPos, assetKey);
             const scale = this.capturedPieceSize / sprite.width;
             sprite.setScale(scale);
             sprite.setAlpha(0.9);
+            sprite.setOrigin(0, 0.5);
 
             this.capturedContainerTop.add(sprite);
             this.capturedSprites.black.push(sprite);
@@ -167,6 +179,16 @@ export class Board {
     }
 
     createPiece(type, color, row, col) {
+        // Parry limits: how many times a piece can parry in the game
+        const PARRY_LIMITS = {
+            pawn: 1,
+            knight: 2,
+            bishop: 2,
+            rook: 3,
+            queen: 4,
+            king: 999  // King has unlimited parries
+        };
+
         const piece = {
             type,
             color,
@@ -174,6 +196,8 @@ export class Board {
             hasMoved: false,
             posture: 0,
             maxPosture: POSTURE_LIMITS[type] || 3,
+            parriesUsed: 0,
+            maxParries: PARRY_LIMITS[type] || 1,
             sprite: null,
         };
 
@@ -340,6 +364,20 @@ export class Board {
 
     isPostureBroken(piece) {
         return piece.posture >= piece.maxPosture;
+    }
+
+    // Parry limit methods
+    canParry(piece) {
+        return piece.parriesUsed < piece.maxParries;
+    }
+
+    useParry(piece) {
+        piece.parriesUsed++;
+        return piece.parriesUsed >= piece.maxParries;
+    }
+
+    getParriesRemaining(piece) {
+        return piece.maxParries - piece.parriesUsed;
     }
 
     reset() {

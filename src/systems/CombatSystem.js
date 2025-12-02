@@ -17,12 +17,16 @@ export class CombatSystem {
         this.isPlayerDefending = false;
         this.currentAttackIndex = 0;
         this.combatData = null;
+        this.perfectParryCount = 0; // Track perfect parries for counter-attack
 
         // Timing
         this.combatStartTime = 0;
         this.attackStartTime = 0;
         this.parryAttempted = false;
         this.parryTime = null;
+
+        // Track delayed calls so we can cancel them
+        this.pendingTimers = [];
 
         // AI parry settings (set by difficulty)
         this.aiParryChance = 0.7;         // Chance to attempt parry
@@ -77,10 +81,14 @@ export class CombatSystem {
             this.defender = defender;
             this.isPlayerDefending = isPlayerDefending;
             this.currentAttackIndex = 0;
+            this.perfectParryCount = 0; // Reset perfect parry counter
             this.onCombatEnd = resolve;
 
             // Get combat data for attacker type
             this.combatData = COMBAT_DATA[attacker.type];
+
+            // Check if defender can parry
+            this.defenderCanParry = this.board.canParry(defender);
 
             // Create combat UI
             this.createCombatUI();
@@ -117,10 +125,15 @@ export class CombatSystem {
 
         // Parry instruction (only for player)
         if (this.isPlayerDefending) {
+            const hintText = this.defenderCanParry
+                ? 'TAP or press SPACE to parry!'
+                : 'NO PARRIES LEFT!';
+            const hintColor = this.defenderCanParry ? '#ffff00' : '#ff4444';
+
             this.parryHint = this.scene.add.text(width / 2, height - 60,
-                'TAP or press SPACE to parry!', {
+                hintText, {
                 font: '18px monospace',
-                color: '#ffff00'
+                color: hintColor
             }).setOrigin(0.5).setDepth(11);
         }
 
@@ -144,14 +157,18 @@ export class CombatSystem {
         const totalDuration = attack.telegraphDuration + attack.attackDuration;
         const perfectWidth = (attack.perfectWindow / totalDuration) * barWidth;
 
+        // Grey out zones if defender cannot parry
+        const perfectColor = this.defenderCanParry ? 0xFFD700 : 0x444444;
+        const normalColor = this.defenderCanParry ? 0xFF8800 : 0x333333;
+
         this.perfectZone = this.scene.add.rectangle(
-            width / 2, barY, perfectWidth, barHeight, 0xFFD700, 0.5
+            width / 2, barY, perfectWidth, barHeight, perfectColor, 0.5
         ).setDepth(11);
 
         // Normal parry zone - width based on total duration
         const normalWidth = (attack.normalWindow / totalDuration) * barWidth;
         this.normalZone = this.scene.add.rectangle(
-            width / 2, barY, normalWidth, barHeight, 0xFF8800, 0.3
+            width / 2, barY, normalWidth, barHeight, normalColor, 0.3
         ).setDepth(11);
 
         // Cursor (moves along bar)
@@ -167,12 +184,33 @@ export class CombatSystem {
         };
     }
 
+    clearPendingTimers() {
+        // Cancel any pending delayed calls from previous attack
+        this.pendingTimers.forEach(timer => {
+            if (timer && timer.remove) {
+                timer.remove();
+            }
+        });
+        this.pendingTimers = [];
+    }
+
     startAttack() {
+        // Clear any lingering timers from previous attack
+        this.clearPendingTimers();
+
+        // Stop any running cursor tween from previous attack
+        if (this.cursorTween) {
+            this.cursorTween.stop();
+            this.cursorTween = null;
+        }
+
         const attack = this.combatData.attacks[this.currentAttackIndex];
         this.attackStartTime = Date.now();
         this.parryAttempted = false;
         this.parryTime = null;
         this.attackResolved = false;
+
+        console.log(`[Combat] Starting attack ${this.currentAttackIndex + 1}/${this.combatData.comboCount}, isPlayerDefending: ${this.isPlayerDefending}`);
 
         // Update UI
         if (this.attackCountText) {
@@ -215,6 +253,12 @@ export class CombatSystem {
     animateTimingCursor(attack) {
         const totalDuration = attack.telegraphDuration + attack.attackDuration;
         const barInfo = this.timingBarInfo;
+        const center = totalDuration / 2;
+
+        console.log(`[Combat] animateTimingCursor: totalDuration=${totalDuration}, center=${center}`);
+
+        // Track which attack this cursor animation is for
+        const attackIndex = this.currentAttackIndex;
 
         // Reset cursor position and color
         this.timingCursor.x = barInfo.x - barInfo.width / 2;
@@ -227,28 +271,56 @@ export class CombatSystem {
             duration: totalDuration,
             ease: 'Linear',
             onComplete: () => {
-                this.resolveAttack();
+                // Only process if we're still on the same attack
+                if (this.currentAttackIndex !== attackIndex) {
+                    console.log(`[Combat] Cursor tween complete but attack index changed (${attackIndex} -> ${this.currentAttackIndex}), ignoring`);
+                    return;
+                }
+                console.log(`[Combat] Cursor tween complete, attackResolved=${this.attackResolved}`);
+                // Attack already resolved at center - just clean up if needed
+                if (!this.attackResolved) {
+                    console.log(`[Combat] Resolving attack from cursor tween complete (fallback)`);
+                    this.resolveAttack();
+                }
             }
         });
 
         // Change cursor color when entering the normal parry zone (centered at totalDuration/2)
-        const center = totalDuration / 2;
         const normalStart = center - attack.normalWindow / 2;
         const normalEnd = center + attack.normalWindow / 2;
 
+        // Schedule attack resolution at the END of the parry window
+        // This is when the hit happens if no parry was attempted during the window
+        const parryWindowEndTimer = this.scene.time.delayedCall(normalEnd, () => {
+            // Only process if we're still on the same attack
+            if (this.currentAttackIndex !== attackIndex) {
+                console.log(`[Combat] Parry window end timer fired but attack index changed (${attackIndex} -> ${this.currentAttackIndex}), ignoring`);
+                return;
+            }
+            console.log(`[Combat] Parry window ended, parryAttempted=${this.parryAttempted}, attackResolved=${this.attackResolved}`);
+            if (!this.parryAttempted && !this.attackResolved) {
+                // No parry attempted during window - attack lands (miss)
+                console.log(`[Combat] No parry during window - resolving as miss`);
+                this.resolveAttack();
+            }
+        });
+        this.pendingTimers.push(parryWindowEndTimer);
+
         // Turn green when entering parry zone
-        this.scene.time.delayedCall(normalStart, () => {
+        const greenTimer = this.scene.time.delayedCall(normalStart, () => {
             if (this.timingCursor) {
                 this.timingCursor.setFillStyle(0x00FF00);
             }
         });
+        this.pendingTimers.push(greenTimer);
 
         // Turn red again when exiting parry zone
-        this.scene.time.delayedCall(normalEnd, () => {
+        const redTimer = this.scene.time.delayedCall(normalEnd, () => {
             if (this.timingCursor) {
                 this.timingCursor.setFillStyle(0xFF0000);
             }
         });
+        this.pendingTimers.push(redTimer);
     }
 
     playTelegraphAnimation(attack) {
@@ -260,6 +332,9 @@ export class CombatSystem {
         // Store original positions and scale for returning after combat
         this.attackerOriginalX = attackerSprite.x;
         this.attackerOriginalY = attackerSprite.y;
+        // Store defender original position too (for reset after interrupted animations)
+        this.defenderOriginalX = defenderSprite.x;
+        this.defenderOriginalY = defenderSprite.y;
         const originalScaleX = attackerSprite.scaleX;
         const originalScaleY = attackerSprite.scaleY;
 
@@ -340,7 +415,13 @@ export class CombatSystem {
         // AI attempts parry based on parry chance
         const willParry = Math.random() < this.aiParryChance;
 
-        if (willParry) {
+        console.log(`[Combat] AI parry decision: willParry=${willParry}, aiParryChance=${this.aiParryChance}, defenderCanParry=${this.defenderCanParry}`);
+
+        // Track which attack this is for
+        const attackIndex = this.currentAttackIndex;
+
+        // AI can only parry if they have parries remaining
+        if (willParry && this.defenderCanParry) {
             const totalDuration = attack.telegraphDuration + attack.attackDuration;
             const centerTime = totalDuration / 2;
 
@@ -362,13 +443,24 @@ export class CombatSystem {
                 actualTime = centerTime + side * offset;
             }
 
-            this.scene.time.delayedCall(actualTime, () => {
+            console.log(`[Combat] AI will attempt parry at ${actualTime}ms (center: ${centerTime}ms, perfect: ${willBePerfect})`);
+
+            const aiParryTimer = this.scene.time.delayedCall(actualTime, () => {
+                // Only process if we're still on the same attack
+                if (this.currentAttackIndex !== attackIndex) {
+                    console.log(`[Combat] AI parry timer fired but attack index changed (${attackIndex} -> ${this.currentAttackIndex}), ignoring`);
+                    return;
+                }
+                console.log(`[Combat] AI parry timer fired, inCombat=${this.inCombat}, parryAttempted=${this.parryAttempted}`);
                 if (this.inCombat && !this.parryAttempted) {
                     this.attemptParry();
                 }
             });
+            this.pendingTimers.push(aiParryTimer);
+        } else {
+            console.log(`[Combat] AI will NOT parry - attack will land`);
         }
-        // If AI doesn't parry, attack will land (miss)
+        // If AI doesn't parry, attack will land (miss) - resolved by animateTimingCursor center callback
     }
 
     /**
@@ -376,6 +468,9 @@ export class CombatSystem {
      */
     attemptParry() {
         if (!this.inCombat || this.parryAttempted) return;
+
+        // Cannot parry if defender has no parries left
+        if (!this.defenderCanParry) return;
 
         this.parryAttempted = true;
         this.parryTime = Date.now() - this.attackStartTime;
@@ -406,8 +501,12 @@ export class CombatSystem {
 
     resolveAttack() {
         // Prevent double resolution (from both parry attempt and cursor tween completion)
-        if (this.attackResolved) return;
+        if (this.attackResolved) {
+            console.log(`[Combat] resolveAttack called but already resolved, skipping`);
+            return;
+        }
         this.attackResolved = true;
+        console.log(`[Combat] resolveAttack: parryAttempted=${this.parryAttempted}, parryTime=${this.parryTime}`);
 
         const attack = this.combatData.attacks[this.currentAttackIndex];
         const totalDuration = attack.telegraphDuration + attack.attackDuration;
@@ -430,11 +529,11 @@ export class CombatSystem {
         }
 
         // Apply result
-        this.applyAttackResult(result, attack);
+        this.applyAttackResult(result);
     }
 
-    applyAttackResult(result, attack) {
-        console.log(`Attack result: ${result}`);
+    applyAttackResult(result) {
+        console.log(`[Combat] applyAttackResult: ${result}, currentAttackIndex=${this.currentAttackIndex}, comboCount=${this.combatData.comboCount}`);
 
         const vfx = VFX_PARAMS[result === 'miss' ? 'missedParry' : result === 'perfect' ? 'perfectParry' : 'normalParry'];
 
@@ -464,30 +563,60 @@ export class CombatSystem {
         this.showResultText(result);
 
         if (result === 'perfect') {
-            // Perfect parry - counter attack! Combat ends, defender wins
-            this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
-                this.endCombat('defender_wins');
-            });
-        } else if (result === 'normal') {
-            // Normal parry - defender takes posture damage but survives
-            this.defender.posture += attack.damage;
+            // Perfect parry - track it, but continue the combo
+            // Counter-attack only happens if ALL hits in the combo are perfect parried
+            this.perfectParryCount++;
 
-            // Check if posture broken
-            if (this.defender.posture >= this.defender.maxPosture) {
-                // Posture broken - next attack is guaranteed hit
-                this.showPostureBroken();
-                this.scene.time.delayedCall(COMBAT_TIMING.postureBreakDelay, () => {
-                    this.endCombat('attacker_wins');
+            // Perfect parry doesn't consume defender's parry (it's perfect!)
+            // But attacker still loses a parry point
+            this.board.useParry(this.attacker);
+
+            // Continue to next attack or check if all were perfect
+            this.currentAttackIndex++;
+            if (this.currentAttackIndex < this.combatData.comboCount) {
+                this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
+                    this.startAttack();
                 });
             } else {
-                // Continue to next attack or end combat
-                this.currentAttackIndex++;
-                if (this.currentAttackIndex < this.combatData.comboCount) {
-                    this.scene.time.delayedCall(COMBAT_TIMING.comboAttackDelay, () => {
-                        this.startAttack();
+                // Completed all attacks - check if ALL were perfect parries
+                if (this.perfectParryCount === this.combatData.comboCount) {
+                    // All perfect parries! Counter-attack, defender wins
+                    this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
+                        this.endCombat('defender_wins');
                     });
                 } else {
-                    // Survived all attacks!
+                    // Mixed parries (some perfect, some normal) - defender survives but no counter
+                    this.scene.time.delayedCall(COMBAT_TIMING.surviveDelay, () => {
+                        this.endCombat('defender_survives');
+                    });
+                }
+            }
+        } else if (result === 'normal') {
+            // Normal parry - consume one parry from defender's pool
+            this.board.useParry(this.defender);
+
+            // Attacker also loses a parry point when their attack is parried
+            // This creates balance: attacking isn't free, both sides bear a cost
+            this.board.useParry(this.attacker);
+
+            // Update canParry for subsequent attacks in this combat
+            this.defenderCanParry = this.board.canParry(this.defender);
+
+            // Continue to next attack or end combat
+            this.currentAttackIndex++;
+            if (this.currentAttackIndex < this.combatData.comboCount) {
+                this.scene.time.delayedCall(COMBAT_TIMING.comboAttackDelay, () => {
+                    this.startAttack();
+                });
+            } else {
+                // Survived all attacks - check if all were perfect for counter-attack
+                if (this.perfectParryCount === this.combatData.comboCount) {
+                    // This branch won't trigger since we had at least one normal parry
+                    this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
+                        this.endCombat('defender_wins');
+                    });
+                } else {
+                    // Mixed or all normal parries - defender survives but no counter
                     this.scene.time.delayedCall(COMBAT_TIMING.surviveDelay, () => {
                         this.endCombat('defender_survives');
                     });
@@ -549,7 +678,11 @@ export class CombatSystem {
     }
 
     endCombat(result) {
+        console.log(`[Combat] endCombat: ${result}`);
         this.inCombat = false;
+
+        // Clear all pending timers
+        this.clearPendingTimers();
 
         // Clean up UI
         this.cleanupCombatUI();
@@ -575,6 +708,14 @@ export class CombatSystem {
             this.attacker.sprite.x = this.attackerOriginalX;
             this.attacker.sprite.y = this.attackerOriginalY;
             this.attacker.sprite.alpha = 1; // Reset alpha in case flash tween was interrupted
+        }
+
+        // Always reset defender sprite to original position
+        // This fixes position drift when animations are interrupted mid-combat
+        if (this.defender && this.defender.sprite && this.defenderOriginalX !== undefined) {
+            this.defender.sprite.x = this.defenderOriginalX;
+            this.defender.sprite.y = this.defenderOriginalY;
+            this.defender.sprite.alpha = 1; // Reset alpha in case flash tween was interrupted
         }
 
         // Re-sort pieces by depth after combat animations

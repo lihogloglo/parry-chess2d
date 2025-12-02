@@ -35,7 +35,7 @@ export class StockfishAI {
                 parryAccuracy: 0.80,
                 thinkTime: 300
             },
-            sekiro: {
+            expert: {
                 skillLevel: 20,
                 depth: 20,
                 parryAccuracy: 0.95,
@@ -238,7 +238,7 @@ export class StockfishAI {
             easy: 'Easy',
             medium: 'Medium',
             hard: 'Hard',
-            sekiro: 'Sekiro (Master)'
+            expert: 'Expert'
         };
         return names[difficulty] || 'Medium';
     }

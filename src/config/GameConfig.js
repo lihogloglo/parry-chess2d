@@ -34,7 +34,7 @@ export const DIFFICULTY_SETTINGS = {
         aiPerfectParryChance: 0.50,  // 50% of parries are perfect
         description: 'Tight timing, skilled AI'
     },
-    sekiro: {
+    expert: {
         aiParryChance: 0.95,         // 95% chance
         aiPerfectParryChance: 0.80,  // 80% of parries are perfect
         description: 'Hesitation is defeat'

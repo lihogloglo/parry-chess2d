@@ -15,7 +15,11 @@
       "Bash(Select-Object -ExpandProperty FullName)",
       "Bash(tree:*)",
       "Bash(copy:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\\fonts\")",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\assets\\fonts\")",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\")",
+      "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\\characters\")"
     ],
     "deny": [],
     "ask": []

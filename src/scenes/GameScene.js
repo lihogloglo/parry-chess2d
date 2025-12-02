@@ -13,21 +13,44 @@ export default class GameScene extends Phaser.Scene {
 
     init(data) {
         this.difficulty = data?.difficulty || 'medium';
+        this.playerColor = data?.playerColor || 'white';
+        this.opponentCharacter = data?.opponentCharacter || 'char_adult';
+        this.opponentPortrait = data?.opponentPortrait || 'char_adult_portrait';
     }
 
     create() {
         const width = this.cameras.main.width;
         const height = this.cameras.main.height;
 
-        // Calculate board size and position (centered, with space for captured pieces panels)
-        const panelHeight = 50; // Space for top/bottom captured pieces panels
-        const availableHeight = height - (panelHeight * 2) - 80; // Leave room for UI text too
-        const boardSize = Math.min(width * 0.85, availableHeight);
+        // Detect mobile devices
+        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        // Calculate board size and position
+        const uiHeight = 50; // Space for turn indicator and status text
+
+        let boardSize;
+        if (this.isMobile) {
+            // On mobile, use full width
+            const availableHeight = height - uiHeight - 40;
+            boardSize = Math.min(width, availableHeight);
+        } else {
+            // On desktop, make board smaller to leave room for captured pieces on the right
+            const availableHeight = height - uiHeight - 40;
+            boardSize = Math.min(width * 0.65, availableHeight * 0.85);
+        }
+
+        // Center board horizontally and vertically
         const boardX = (width - boardSize) / 2;
-        const boardY = (height - boardSize) / 2;
+        const boardY = uiHeight + (height - uiHeight - boardSize) / 2;
+
+        // Store board position for portrait placement
+        this.boardX = boardX;
+        this.boardY = boardY;
+        this.boardSize = boardSize;
 
         // Create game systems
-        this.board = new Board(this, boardX, boardY, boardSize);
+        // Hide top/bottom captured panels - we show captured pieces next to portrait
+        this.board = new Board(this, boardX, boardY, boardSize, { showCapturedPanels: false });
         this.gameState = new GameState();
         this.gameState.setBoard(this.board);
 
@@ -50,11 +73,14 @@ export default class GameScene extends Phaser.Scene {
         // Game state
         this.selectedPiece = null;
         this.validMoves = [];
-        this.isPlayerTurn = true;
+        this.isPlayerTurn = this.playerColor === 'white'; // Player goes first only if white
         this.isProcessing = false;
         this.inCombat = false;
         this.inPromotion = false;
         this.gameOver = false;
+
+        // UI elements for parry display
+        this.parryIndicator = null;
 
         // Setup input
         this.setupInput();
@@ -62,7 +88,17 @@ export default class GameScene extends Phaser.Scene {
         // Create UI
         this.createUI();
 
-        console.log('GameScene created with difficulty:', this.difficulty);
+        // Create portrait overlay on the board
+        this.createPortraitOverlay();
+
+        console.log('GameScene created with difficulty:', this.difficulty, 'playerColor:', this.playerColor);
+
+        // If player is black, AI moves first
+        if (this.playerColor === 'black') {
+            this.time.delayedCall(500, () => {
+                this.executeAITurn();
+            });
+        }
     }
 
     setupInput() {
@@ -98,7 +134,7 @@ export default class GameScene extends Phaser.Scene {
 
             if (isValidMove) {
                 this.executeMove(this.selectedPiece, row, col);
-            } else if (clickedPiece && clickedPiece.color === this.gameState.currentPlayer) {
+            } else if (clickedPiece && clickedPiece.color === this.playerColor) {
                 // Select different piece of same color
                 this.selectPiece(clickedPiece);
             } else {
@@ -106,8 +142,8 @@ export default class GameScene extends Phaser.Scene {
                 this.deselectPiece();
             }
         } else {
-            // Select piece if it belongs to current player
-            if (clickedPiece && clickedPiece.color === this.gameState.currentPlayer) {
+            // Select piece if it belongs to player
+            if (clickedPiece && clickedPiece.color === this.playerColor) {
                 this.selectPiece(clickedPiece);
             }
         }
@@ -124,16 +160,21 @@ export default class GameScene extends Phaser.Scene {
 
         // Show valid moves
         this.board.showValidMoves(this.validMoves);
+
+        // Show parries remaining above the piece
+        this.showParryIndicator(piece);
     }
 
     deselectPiece() {
         this.selectedPiece = null;
         this.validMoves = [];
         this.board.clearHighlights();
+        this.hideParryIndicator();
     }
 
     async executeMove(piece, toRow, toCol) {
         this.isProcessing = true;
+        this.hideParryIndicator();
         const fromPos = { ...piece.position };
 
         // Highlight the move (origin and destination)
@@ -162,8 +203,9 @@ export default class GameScene extends Phaser.Scene {
         }
         // Check for regular capture
         else if (targetPiece && targetPiece.color !== piece.color) {
-            // Player attacking AI piece - AI defends
-            const combatResult = await this.initiateCombat(piece, targetPiece, false);
+            // Player attacking AI piece - AI defends (player is never defending on their own turn)
+            const isPlayerDefending = false;
+            const combatResult = await this.initiateCombat(piece, targetPiece, isPlayerDefending);
             const result = await this.resolveCombat(combatResult, piece, targetPiece, toRow, toCol);
             capturedPiece = result.capturedPiece;
 
@@ -178,14 +220,16 @@ export default class GameScene extends Phaser.Scene {
 
                 this.updateTurnIndicator();
                 this.board.updateCapturedPieces(this.gameState.capturedPieces);
+                this.updatePortraitCapturedPieces();
 
                 if (this.gameState.isGameOver()) {
                     this.handleGameOver();
                     return;
                 }
 
-                // AI turn
-                if (this.gameState.currentPlayer === 'black') {
+                // AI turn (opponent's color)
+                const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+                if (this.gameState.currentPlayer === opponentColor) {
                     this.isPlayerTurn = false;
                     await this.executeAITurn();
                 } else {
@@ -227,6 +271,7 @@ export default class GameScene extends Phaser.Scene {
         // Update UI
         this.updateTurnIndicator();
         this.board.updateCapturedPieces(this.gameState.capturedPieces);
+        this.updatePortraitCapturedPieces();
 
         // Check game end conditions
         if (this.gameState.isGameOver()) {
@@ -239,9 +284,11 @@ export default class GameScene extends Phaser.Scene {
             this.soundManager.playCheck();
         }
 
-        // AI turn
-        if (this.gameState.currentPlayer === 'black') {
+        // AI turn (opponent's color)
+        const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+        if (this.gameState.currentPlayer === opponentColor) {
             this.isPlayerTurn = false;
+            this.hideParryIndicator();
             await this.executeAITurn();
         } else {
             this.isPlayerTurn = true;
@@ -369,6 +416,7 @@ export default class GameScene extends Phaser.Scene {
      */
     async initiateCombat(attacker, defender, isPlayerDefending) {
         this.inCombat = true;
+        this.hideParryIndicator();
         this.updateStatusText(isPlayerDefending ? 'DEFEND! Press SPACE to parry!' : 'AI defending...');
 
         const result = await this.combatSystem.startCombat(attacker, defender, isPlayerDefending);
@@ -457,7 +505,9 @@ export default class GameScene extends Phaser.Scene {
         // Small delay for visual feedback (from GameConfig)
         await new Promise(resolve => this.time.delayedCall(COMBAT_TIMING.aiThinkDelay, resolve));
 
-        const move = await this.ai.getBestMove('black');
+        // AI plays the opponent's color
+        const aiColor = this.playerColor === 'white' ? 'black' : 'white';
+        const move = await this.ai.getBestMove(aiColor);
 
         if (!move) {
             console.error('AI could not find a move');
@@ -505,6 +555,7 @@ export default class GameScene extends Phaser.Scene {
                 }
                 this.updateTurnIndicator();
                 this.board.updateCapturedPieces(this.gameState.capturedPieces);
+                this.updatePortraitCapturedPieces();
                 if (this.gameState.isGameOver()) {
                     this.handleGameOver();
                     return;
@@ -542,6 +593,7 @@ export default class GameScene extends Phaser.Scene {
         // Update UI
         this.updateTurnIndicator();
         this.board.updateCapturedPieces(this.gameState.capturedPieces);
+        this.updatePortraitCapturedPieces();
 
         // Check game end
         if (this.gameState.isGameOver()) {
@@ -562,7 +614,8 @@ export default class GameScene extends Phaser.Scene {
         const width = this.cameras.main.width;
 
         // Turn indicator
-        this.turnText = this.add.text(width / 2, 20, 'White to move', {
+        const initialTurnText = this.playerColor === 'white' ? 'Your turn' : 'Opponent\'s turn';
+        this.turnText = this.add.text(width / 2, 20, initialTurnText, {
             font: '18px monospace',
             color: '#ffffff'
         }).setOrigin(0.5, 0);
@@ -593,20 +646,168 @@ export default class GameScene extends Phaser.Scene {
         }).setOrigin(1, 0);
     }
 
+    createPortraitOverlay() {
+        // Place portrait on the upper-left corner of the chessboard
+        // Anchor at bottom-left so it sits on the board corner
+        const squareSize = this.boardSize / 8;
+        const portraitSize = squareSize * 1.5;
+
+        // Position: top-left corner of the board
+        const portraitX = this.boardX;
+        const portraitY = this.boardY;
+
+        // Create portrait container
+        this.portraitContainer = this.add.container(portraitX, portraitY);
+        this.portraitContainer.setDepth(1); // Below pieces (pieceContainer is depth 2)
+
+        // Character portrait (no frame, just the image)
+        // Anchor at bottom-left (0, 1) so portrait extends up and right from the board corner
+        const portrait = this.add.image(0, 0, this.opponentPortrait);
+        const scale = portraitSize / Math.max(portrait.width, portrait.height);
+        portrait.setScale(scale);
+        portrait.setOrigin(0, 1); // Bottom-left anchor
+        this.portraitContainer.add(portrait);
+
+        // Store portrait dimensions for captured pieces positioning
+        const portraitWidth = portrait.width * scale;
+
+        if (this.isMobile) {
+            // Mobile: captured pieces to the right of portrait, above the board (top)
+            const capturedX = portraitWidth + 5;
+            const capturedY = -squareSize * 0.3;
+            this.capturedPiecesContainer = this.add.container(capturedX, capturedY);
+            this.portraitContainer.add(this.capturedPiecesContainer);
+        } else {
+            // Desktop: captured pieces on the right side of the board, bottom part
+            // Position independently from portrait container
+            const capturedX = this.boardX + this.boardSize + 15; // Right of the board
+            const capturedY = this.boardY + this.boardSize - squareSize * 2; // Bottom area
+            this.capturedPiecesContainer = this.add.container(capturedX, capturedY);
+            this.capturedPiecesContainer.setDepth(1);
+        }
+    }
+
+    updatePortraitCapturedPieces() {
+        if (!this.capturedPiecesContainer) return;
+
+        // Clear existing sprites
+        this.capturedPiecesContainer.removeAll(true);
+
+        // Get pieces captured by player
+        const capturedByPlayer = this.gameState.capturedPieces[this.playerColor] || [];
+
+        const squareSize = this.boardSize / 8;
+        const pieceSize = squareSize * 0.4;
+
+        if (this.isMobile) {
+            // Mobile: horizontal layout (pieces per row)
+            const piecesPerRow = 8;
+            capturedByPlayer.forEach((pieceType, index) => {
+                const row = Math.floor(index / piecesPerRow);
+                const col = index % piecesPerRow;
+                const x = col * pieceSize;
+                const y = row * pieceSize;
+
+                const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
+                sprite.setPosition(x, y);
+                this.capturedPiecesContainer.add(sprite);
+            });
+        } else {
+            // Desktop: vertical layout on right side (2 columns, growing upward)
+            const piecesPerCol = 8;
+            capturedByPlayer.forEach((pieceType, index) => {
+                const col = Math.floor(index / piecesPerCol);
+                const row = index % piecesPerCol;
+                const x = col * pieceSize;
+                const y = -row * pieceSize; // Grow upward from bottom
+
+                const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
+                sprite.setPosition(x, y);
+                this.capturedPiecesContainer.add(sprite);
+            });
+        }
+    }
+
+    createCapturedPieceSprite(pieceType, pieceSize) {
+        // Captured pieces are opponent's color
+        const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+        const colorPrefix = opponentColor === 'white' ? 'W' : 'B';
+        const assetKey = `${colorPrefix}_${pieceType.charAt(0).toUpperCase() + pieceType.slice(1)}`;
+
+        const sprite = this.add.image(0, 0, assetKey);
+        const scale = (pieceSize - 2) / sprite.width;
+        sprite.setScale(scale);
+        sprite.setAlpha(0.9);
+
+        return sprite;
+    }
+
     updateTurnIndicator() {
         const turn = this.gameState.currentPlayer;
-        this.turnText.setText(`${turn.charAt(0).toUpperCase() + turn.slice(1)} to move`);
+        const isYourTurn = turn === this.playerColor;
+        const turnLabel = isYourTurn ? 'Your turn' : 'Opponent\'s turn';
 
         if (this.gameState.isInCheck(turn)) {
-            this.turnText.setText(`${turn.charAt(0).toUpperCase() + turn.slice(1)} in CHECK!`);
-            this.turnText.setColor('#ff4444');
+            const checkLabel = isYourTurn ? 'You are in CHECK!' : 'Opponent in CHECK!';
+            this.turnText.setText(checkLabel);
+            this.turnText.setColor(isYourTurn ? '#ff4444' : '#ffaa00');
         } else {
+            this.turnText.setText(turnLabel);
             this.turnText.setColor('#ffffff');
         }
     }
 
     updateStatusText(text) {
         this.statusText.setText(text);
+    }
+
+    showParryIndicator(piece) {
+        this.hideParryIndicator();
+
+        const parriesLeft = this.board.getParriesRemaining(piece);
+        const maxParries = piece.maxParries;
+
+        // Don't show for king (unlimited parries)
+        if (maxParries >= 999) return;
+
+        // Calculate position above the piece sprite
+        const spriteX = this.board.x + piece.sprite.x;
+        const spriteY = this.board.y + piece.sprite.y - this.board.squareSize * 0.6;
+
+        // Create container for the indicator
+        this.parryIndicator = this.add.container(spriteX, spriteY);
+        this.parryIndicator.setDepth(50);
+
+        // Draw flat segmented bar
+        const barWidth = this.board.squareSize * 0.6;
+        const barHeight = 6;
+        const segmentGap = 2;
+        const segmentWidth = (barWidth - (maxParries - 1) * segmentGap) / maxParries;
+
+        // Background bar (dark)
+        const bgBar = this.add.rectangle(0, 0, barWidth + 4, barHeight + 4, 0x000000);
+        this.parryIndicator.add(bgBar);
+
+        // Draw segments
+        const startX = -barWidth / 2 + segmentWidth / 2;
+
+        for (let i = 0; i < maxParries; i++) {
+            const x = startX + i * (segmentWidth + segmentGap);
+            const hasParry = i < parriesLeft;
+
+            // Segment fill (orange if available, dark grey if used)
+            const segmentColor = hasParry ? 0xFF8800 : 0x333333;
+            const segment = this.add.rectangle(x, 0, segmentWidth, barHeight, segmentColor);
+            this.parryIndicator.add(segment);
+        }
+    }
+
+    hideParryIndicator() {
+        if (this.parryIndicator) {
+            this.tweens.killTweensOf(this.parryIndicator);
+            this.parryIndicator.destroy();
+            this.parryIndicator = null;
+        }
     }
 
     handleGameOver() {
@@ -620,14 +821,15 @@ export default class GameScene extends Phaser.Scene {
         let titleColor = '#ffffff';
         let playerWon = null;
 
-        if (this.gameState.isCheckmate('white')) {
+        const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+        if (this.gameState.isCheckmate(this.playerColor)) {
             titleText = 'DEFEAT';
-            subtitleText = 'Checkmate - Black wins';
+            subtitleText = `Checkmate - ${opponentColor.charAt(0).toUpperCase() + opponentColor.slice(1)} wins`;
             titleColor = '#ff4444';
             playerWon = false;
-        } else if (this.gameState.isCheckmate('black')) {
+        } else if (this.gameState.isCheckmate(opponentColor)) {
             titleText = 'VICTORY';
-            subtitleText = 'Checkmate - White wins';
+            subtitleText = `Checkmate - ${this.playerColor.charAt(0).toUpperCase() + this.playerColor.slice(1)} wins`;
             titleColor = '#ffd700';
             playerWon = true;
         } else if (this.gameState.isStalemate()) {
