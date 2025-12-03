@@ -12,6 +12,7 @@ export class Board {
         this.size = size;
         this.squareSize = size / 8;
         this.showCapturedPanels = options.showCapturedPanels !== false; // default true
+        this.flipped = options.flipped || false; // When true, black is at bottom (for playing as black)
 
         // Colors
         this.lightColor = 0xF0D9B5;  // Light squares
@@ -43,6 +44,34 @@ export class Board {
             this.createCapturedPanels();
         }
         this.setupInitialPosition();
+    }
+
+    /**
+     * Convert logical board row to visual row (handles board flip)
+     */
+    toVisualRow(logicalRow) {
+        return this.flipped ? (7 - logicalRow) : logicalRow;
+    }
+
+    /**
+     * Convert visual row to logical board row (handles board flip)
+     */
+    toLogicalRow(visualRow) {
+        return this.flipped ? (7 - visualRow) : visualRow;
+    }
+
+    /**
+     * Convert logical board col to visual col (handles board flip)
+     */
+    toVisualCol(logicalCol) {
+        return this.flipped ? (7 - logicalCol) : logicalCol;
+    }
+
+    /**
+     * Convert visual col to logical board col (handles board flip)
+     */
+    toLogicalCol(visualCol) {
+        return this.flipped ? (7 - visualCol) : visualCol;
     }
 
     createCapturedPanels() {
@@ -192,7 +221,7 @@ export class Board {
         const piece = {
             type,
             color,
-            position: { row, col },
+            position: { row, col },  // Logical position (standard chess: row 0 = rank 8)
             hasMoved: false,
             posture: 0,
             maxPosture: POSTURE_LIMITS[type] || 3,
@@ -201,9 +230,11 @@ export class Board {
             sprite: null,
         };
 
-        // Create visual representation
-        const x = col * this.squareSize + this.squareSize / 2;
-        const y = row * this.squareSize + this.squareSize / 2;
+        // Create visual representation using visual coordinates
+        const visualRow = this.toVisualRow(row);
+        const visualCol = this.toVisualCol(col);
+        const x = visualCol * this.squareSize + this.squareSize / 2;
+        const y = visualRow * this.squareSize + this.squareSize / 2;
 
         // Build asset key: W_Pawn, B_King, etc.
         const colorPrefix = color === 'white' ? 'W' : 'B';
@@ -251,8 +282,10 @@ export class Board {
     }
 
     movePiece(piece, toRow, toCol, animate = true) {
-        const targetX = toCol * this.squareSize + this.squareSize / 2;
-        const targetY = toRow * this.squareSize + this.squareSize / 2;
+        const visualRow = this.toVisualRow(toRow);
+        const visualCol = this.toVisualCol(toCol);
+        const targetX = visualCol * this.squareSize + this.squareSize / 2;
+        const targetY = visualRow * this.squareSize + this.squareSize / 2;
 
         if (animate && piece.sprite) {
             this.scene.tweens.add({
@@ -287,8 +320,10 @@ export class Board {
 
     showValidMoves(moves) {
         moves.forEach(move => {
-            const x = move.col * this.squareSize + this.squareSize / 2;
-            const y = move.row * this.squareSize + this.squareSize / 2;
+            const visualRow = this.toVisualRow(move.row);
+            const visualCol = this.toVisualCol(move.col);
+            const x = visualCol * this.squareSize + this.squareSize / 2;
+            const y = visualRow * this.squareSize + this.squareSize / 2;
 
             // Check if there's a piece to capture
             const targetPiece = this.getPieceAt(move.row, move.col);
@@ -309,8 +344,10 @@ export class Board {
     }
 
     highlightSquare(row, col, color = this.selectedColor) {
-        const x = col * this.squareSize + this.squareSize / 2;
-        const y = row * this.squareSize + this.squareSize / 2;
+        const visualRow = this.toVisualRow(row);
+        const visualCol = this.toVisualCol(col);
+        const x = visualCol * this.squareSize + this.squareSize / 2;
+        const y = visualRow * this.squareSize + this.squareSize / 2;
 
         const highlight = this.scene.add.rectangle(
             x, y,
@@ -346,8 +383,13 @@ export class Board {
             return null;
         }
 
-        const col = Math.floor(localX / this.squareSize);
-        const row = Math.floor(localY / this.squareSize);
+        // Get visual coordinates from click position
+        const visualCol = Math.floor(localX / this.squareSize);
+        const visualRow = Math.floor(localY / this.squareSize);
+
+        // Convert to logical coordinates (handles board flip)
+        const col = this.toLogicalCol(visualCol);
+        const row = this.toLogicalRow(visualRow);
 
         return { row, col };
     }

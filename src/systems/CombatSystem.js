@@ -62,21 +62,9 @@ export class CombatSystem {
      */
     startCombat(attacker, defender, isPlayerDefending) {
         return new Promise((resolve) => {
-            // King cannot be parried - attacker always wins instantly
-            // (You can't counter-attack a king, checkmate is the only way to win)
-            if (attacker.type === 'king') {
-                resolve({
-                    result: 'attacker_wins',
-                    attacker,
-                    defender,
-                    attackerWins: true,
-                    defenderWins: false,
-                    defenderSurvives: false
-                });
-                return;
-            }
-
             this.inCombat = true;
+            // Track if attacker is a king (special rules: cannot be counter-attacked)
+            this.attackerIsKing = attacker.type === 'king';
             this.attacker = attacker;
             this.defender = defender;
             this.isPlayerDefending = isPlayerDefending;
@@ -581,9 +569,16 @@ export class CombatSystem {
                 // Completed all attacks - check if ALL were perfect parries
                 if (this.perfectParryCount === this.combatData.comboCount) {
                     // All perfect parries! Counter-attack, defender wins
-                    this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
-                        this.endCombat('defender_wins');
-                    });
+                    // EXCEPT: Cannot counter-attack a king - defender just survives
+                    if (this.attackerIsKing) {
+                        this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
+                            this.endCombat('defender_survives');
+                        });
+                    } else {
+                        this.scene.time.delayedCall(COMBAT_TIMING.perfectParryDelay, () => {
+                            this.endCombat('defender_wins');
+                        });
+                    }
                 } else {
                     // Mixed parries (some perfect, some normal) - defender survives but no counter
                     this.scene.time.delayedCall(COMBAT_TIMING.surviveDelay, () => {
@@ -702,9 +697,10 @@ export class CombatSystem {
             this.telegraphTweens = [];
         }
 
-        // Reset attacker sprite to original position if attacker didn't win
-        // (If attacker wins, GameScene will move it to the target square)
-        if (result !== 'attacker_wins' && this.attacker && this.attacker.sprite) {
+        // Always reset attacker sprite to original position
+        // Even when attacker wins, we reset first so performMove animates from the correct starting position
+        // This prevents the attacker from ending up at weird positions when combat animations are interrupted
+        if (this.attacker && this.attacker.sprite) {
             this.attacker.sprite.x = this.attackerOriginalX;
             this.attacker.sprite.y = this.attackerOriginalY;
             this.attacker.sprite.alpha = 1; // Reset alpha in case flash tween was interrupted

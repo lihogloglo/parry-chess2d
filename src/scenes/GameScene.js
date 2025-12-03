@@ -50,12 +50,19 @@ export default class GameScene extends Phaser.Scene {
 
         // Create game systems
         // Hide top/bottom captured panels - we show captured pieces next to portrait
-        this.board = new Board(this, boardX, boardY, boardSize, { showCapturedPanels: false });
+        // Flip board when playing as black so player's pieces are at the bottom
+        const flipped = this.playerColor === 'black';
+        this.board = new Board(this, boardX, boardY, boardSize, { showCapturedPanels: false, flipped });
         this.gameState = new GameState();
         this.gameState.setBoard(this.board);
 
-        // Initialize AI with difficulty
+        // Initialize AI with difficulty and pre-warm the engine
         this.ai = new StockfishAI(this.gameState, this.difficulty);
+
+        // Pre-warm Stockfish engine after a short delay to ensure it's ready
+        this.time.delayedCall(100, () => {
+            this.ai.prewarm();
+        });
 
         // Initialize Combat System
         this.combatSystem = new CombatSystem(this, this.board);
@@ -91,7 +98,7 @@ export default class GameScene extends Phaser.Scene {
         // Create portrait overlay on the board
         this.createPortraitOverlay();
 
-        console.log('GameScene created with difficulty:', this.difficulty, 'playerColor:', this.playerColor);
+        console.log('GameScene created with difficulty:', this.difficulty, 'playerColor:', this.playerColor, 'board.flipped:', this.board.flipped);
 
         // If player is black, AI moves first
         if (this.playerColor === 'black') {
@@ -468,8 +475,11 @@ export default class GameScene extends Phaser.Scene {
 
     async performMove(piece, toRow, toCol) {
         return new Promise(resolve => {
-            const targetX = toCol * this.board.squareSize + this.board.squareSize / 2;
-            const targetY = toRow * this.board.squareSize + this.board.squareSize / 2;
+            // Convert logical coordinates to visual coordinates for animation
+            const visualRow = this.board.toVisualRow(toRow);
+            const visualCol = this.board.toVisualCol(toCol);
+            const targetX = visualCol * this.board.squareSize + this.board.squareSize / 2;
+            const targetY = visualRow * this.board.squareSize + this.board.squareSize / 2;
 
             // Animate the piece
             this.tweens.add({

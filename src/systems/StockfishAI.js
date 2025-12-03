@@ -15,31 +15,28 @@ export class StockfishAI {
 
         this.initializeEngine();
 
-        // Difficulty settings
+        // Difficulty settings - using time-based search for more consistent performance
+        // moveTime is in milliseconds - how long Stockfish is allowed to think
         this.difficultySettings = {
             easy: {
                 skillLevel: 1,
-                depth: 5,
-                parryAccuracy: 0.30,
-                thinkTime: 100
+                moveTime: 200,      // 200ms thinking time
+                parryAccuracy: 0.30
             },
             medium: {
                 skillLevel: 5,
-                depth: 10,
-                parryAccuracy: 0.60,
-                thinkTime: 200
+                moveTime: 500,      // 500ms thinking time
+                parryAccuracy: 0.60
             },
             hard: {
                 skillLevel: 10,
-                depth: 15,
-                parryAccuracy: 0.80,
-                thinkTime: 300
+                moveTime: 1000,     // 1 second thinking time
+                parryAccuracy: 0.80
             },
             expert: {
                 skillLevel: 20,
-                depth: 20,
-                parryAccuracy: 0.95,
-                thinkTime: 500
+                moveTime: 2000,     // 2 seconds thinking time
+                parryAccuracy: 0.95
             }
         };
     }
@@ -99,6 +96,18 @@ export class StockfishAI {
         this.sendCommand('isready');
     }
 
+    /**
+     * Pre-warm the engine by running a quick calculation on the starting position.
+     * This ensures the WASM is fully loaded and compiled before the first real move.
+     */
+    prewarm() {
+        if (this.engineReady && this.engine) {
+            // Run a very quick calculation to warm up the engine
+            this.sendCommand('position startpos');
+            this.sendCommand('go movetime 1');
+        }
+    }
+
     sendCommand(cmd) {
         if (this.engine) {
             this.engine.postMessage(cmd);
@@ -130,7 +139,8 @@ export class StockfishAI {
             const settings = this.difficultySettings[this.difficulty];
 
             this.sendCommand('position fen ' + fen);
-            this.sendCommand(`go depth ${settings.depth}`);
+            // Use time-based search for consistent, predictable performance
+            this.sendCommand(`go movetime ${settings.moveTime}`);
 
             this.currentCallback = (moveStr, promotionChar) => {
                 const move = this.convertStockfishMove(moveStr, promotionChar);

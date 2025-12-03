@@ -88,8 +88,8 @@ export const COMBAT_TIMING = {
     // Delay after missed parry (attack lands)
     missedParryDelay: 300,
 
-    // AI thinking delay before move
-    aiThinkDelay: 500
+    // AI thinking delay before move (reduced for snappier feel)
+    aiThinkDelay: 100
 };
 
 // =============================================================================
