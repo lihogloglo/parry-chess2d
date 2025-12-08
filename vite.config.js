@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
     base: './',
     build: {
-        outDir: 'dist',
+        outDir: 'docs',
         assetsDir: 'assets',
         sourcemap: true,
     },
@@ -11,6 +12,20 @@ export default defineConfig({
         port: 3000,
         open: true,
     },
+    plugins: [
+        viteStaticCopy({
+            targets: [
+                {
+                    src: 'node_modules/stockfish.js/stockfish.wasm',
+                    dest: 'assets'
+                },
+                {
+                    src: 'node_modules/stockfish.js/stockfish.wasm.js',
+                    dest: 'assets'
+                }
+            ]
+        })
+    ],
     // Handle stockfish.js web worker
     optimizeDeps: {
         exclude: ['stockfish.js']

@@ -44,8 +44,14 @@ export class StockfishAI {
     async initializeEngine() {
         try {
             // Try to load Stockfish as a Web Worker
-            // The path may need adjustment based on how stockfish.js is bundled
-            this.engine = new Worker(new URL('stockfish.js/stockfish.wasm.js', import.meta.url));
+            // In production, use the copied files in assets folder
+            // In development, use the node_modules path
+            const isDev = import.meta.env.DEV;
+            const workerPath = isDev
+                ? new URL('stockfish.js/stockfish.wasm.js', import.meta.url)
+                : new URL('./assets/stockfish.wasm.js', window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '/'));
+
+            this.engine = new Worker(workerPath);
 
             this.engine.onmessage = (event) => {
                 const message = typeof event === 'string' ? event : event.data || event;

@@ -21,7 +21,9 @@
       "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\")",
       "Bash(dir /b \"d:\\Gamedev\\Sekiro chess\\parry-chess2d\\public\\assets\\characters\")",
       "Bash(cd d:GamedevSekiro chessparry-chess2d)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(dir:*)",
+      "Bash(timeout 5 npm run preview:*)"
     ],
     "deny": [],
     "ask": []
