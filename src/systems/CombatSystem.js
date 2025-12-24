@@ -651,27 +651,6 @@ export class CombatSystem {
         });
     }
 
-    showPostureBroken() {
-        const width = this.scene.cameras.main.width;
-        const text = this.scene.add.text(width / 2, 240, 'POSTURE BROKEN!', {
-            font: 'bold 28px monospace',
-            color: '#FF4444',
-            stroke: '#000000',
-            strokeThickness: 4
-        }).setOrigin(0.5).setDepth(15);
-
-        this.scene.tweens.add({
-            targets: text,
-            scaleX: 1.2,
-            scaleY: 1.2,
-            duration: 200,
-            yoyo: true,
-            onComplete: () => {
-                this.scene.time.delayedCall(400, () => text.destroy());
-            }
-        });
-    }
-
     endCombat(result) {
         console.log(`[Combat] endCombat: ${result}`);
         this.inCombat = false;

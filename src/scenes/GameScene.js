@@ -218,7 +218,9 @@ export default class GameScene extends Phaser.Scene {
 
             // If move was blocked (defender survived or counter-attacked), sync board state and end turn
             if (result.moveBlocked) {
-                this.gameState.syncChessJsWithBoard();
+                // Move was blocked - it's now the opponent's turn
+                const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+                this.gameState.syncChessJsWithBoard(opponentColor);
                 this.gameState.completeMove({ capturedPiece });
 
                 if (capturedPiece) {
@@ -234,14 +236,9 @@ export default class GameScene extends Phaser.Scene {
                     return;
                 }
 
-                // AI turn (opponent's color)
-                const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
-                if (this.gameState.currentPlayer === opponentColor) {
-                    this.isPlayerTurn = false;
-                    await this.executeAITurn();
-                } else {
-                    this.isPlayerTurn = true;
-                }
+                // AI turn
+                this.isPlayerTurn = false;
+                await this.executeAITurn();
 
                 this.isProcessing = false;
                 return;
@@ -515,9 +512,8 @@ export default class GameScene extends Phaser.Scene {
         // Small delay for visual feedback (from GameConfig)
         await new Promise(resolve => this.time.delayedCall(COMBAT_TIMING.aiThinkDelay, resolve));
 
-        // AI plays the opponent's color
-        const aiColor = this.playerColor === 'white' ? 'black' : 'white';
-        const move = await this.ai.getBestMove(aiColor);
+        // AI gets move based on chess.js state (no color parameter needed)
+        const move = await this.ai.getBestMove();
 
         if (!move) {
             console.error('AI could not find a move');
@@ -558,7 +554,8 @@ export default class GameScene extends Phaser.Scene {
 
             // If move was blocked (defender survived or counter-attacked), sync board state and end turn
             if (result.moveBlocked) {
-                this.gameState.syncChessJsWithBoard();
+                // AI's move was blocked - it's now the player's turn
+                this.gameState.syncChessJsWithBoard(this.playerColor);
                 this.gameState.completeMove({ capturedPiece });
                 if (capturedPiece) {
                     this.soundManager.playCapture();
@@ -682,11 +679,18 @@ export default class GameScene extends Phaser.Scene {
         const portraitWidth = portrait.width * scale;
 
         if (this.isMobile) {
-            // Mobile: captured pieces to the right of portrait, above the board (top)
-            const capturedX = portraitWidth + 5;
-            const capturedY = -squareSize * 0.3;
-            this.capturedPiecesContainer = this.add.container(capturedX, capturedY);
-            this.portraitContainer.add(this.capturedPiecesContainer);
+            // Mobile: Two separate containers for captured pieces
+            // 1. Opponent's captures (pieces captured BY opponent) - next to opponent portrait (top)
+            const opponentCapturedX = portraitWidth + 5;
+            const opponentCapturedY = -squareSize * 0.3;
+            this.opponentCapturedContainer = this.add.container(opponentCapturedX, opponentCapturedY);
+            this.portraitContainer.add(this.opponentCapturedContainer);
+
+            // 2. Player's captures (pieces captured BY player) - bottom of board (player side)
+            const playerCapturedX = this.boardX + 5;
+            const playerCapturedY = this.boardY + this.boardSize + squareSize * 0.3;
+            this.capturedPiecesContainer = this.add.container(playerCapturedX, playerCapturedY);
+            this.capturedPiecesContainer.setDepth(1);
         } else {
             // Desktop: captured pieces on the right side of the board, bottom part
             // Position independently from portrait container
@@ -698,50 +702,76 @@ export default class GameScene extends Phaser.Scene {
     }
 
     updatePortraitCapturedPieces() {
-        if (!this.capturedPiecesContainer) return;
-
-        // Clear existing sprites
-        this.capturedPiecesContainer.removeAll(true);
-
-        // Get pieces captured by player
-        const capturedByPlayer = this.gameState.capturedPieces[this.playerColor] || [];
-
         const squareSize = this.boardSize / 8;
         const pieceSize = squareSize * 0.4;
 
         if (this.isMobile) {
-            // Mobile: horizontal layout (pieces per row)
-            const piecesPerRow = 8;
-            capturedByPlayer.forEach((pieceType, index) => {
-                const row = Math.floor(index / piecesPerRow);
-                const col = index % piecesPerRow;
-                const x = col * pieceSize;
-                const y = row * pieceSize;
+            // Mobile: update opponent's captured pieces container
+            if (this.opponentCapturedContainer) {
+                this.opponentCapturedContainer.removeAll(true);
 
-                const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
-                sprite.setPosition(x, y);
-                this.capturedPiecesContainer.add(sprite);
-            });
+                // Get pieces captured by opponent (player's pieces)
+                const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
+                const capturedByOpponent = this.gameState.capturedPieces[opponentColor] || [];
+
+                // Display pieces captured BY opponent (next to opponent portrait at top)
+                const piecesPerRow = 8;
+                capturedByOpponent.forEach((pieceType, index) => {
+                    const row = Math.floor(index / piecesPerRow);
+                    const col = index % piecesPerRow;
+                    const x = col * pieceSize;
+                    const y = row * pieceSize;
+
+                    const sprite = this.createCapturedPieceSpriteForColor(pieceType, pieceSize, this.playerColor);
+                    sprite.setPosition(x, y);
+                    this.opponentCapturedContainer.add(sprite);
+                });
+            }
+
+            // Display pieces captured BY player (at bottom, player side)
+            if (this.capturedPiecesContainer) {
+                this.capturedPiecesContainer.removeAll(true);
+                const capturedByPlayer = this.gameState.capturedPieces[this.playerColor] || [];
+                const piecesPerRow = 8;
+                capturedByPlayer.forEach((pieceType, index) => {
+                    const row = Math.floor(index / piecesPerRow);
+                    const col = index % piecesPerRow;
+                    const x = col * pieceSize;
+                    const y = row * pieceSize;
+
+                    const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
+                    sprite.setPosition(x, y);
+                    this.capturedPiecesContainer.add(sprite);
+                });
+            }
         } else {
             // Desktop: vertical layout on right side (2 columns, growing upward)
-            const piecesPerCol = 8;
-            capturedByPlayer.forEach((pieceType, index) => {
-                const col = Math.floor(index / piecesPerCol);
-                const row = index % piecesPerCol;
-                const x = col * pieceSize;
-                const y = -row * pieceSize; // Grow upward from bottom
+            if (this.capturedPiecesContainer) {
+                this.capturedPiecesContainer.removeAll(true);
+                const capturedByPlayer = this.gameState.capturedPieces[this.playerColor] || [];
+                const piecesPerCol = 8;
+                capturedByPlayer.forEach((pieceType, index) => {
+                    const col = Math.floor(index / piecesPerCol);
+                    const row = index % piecesPerCol;
+                    const x = col * pieceSize;
+                    const y = -row * pieceSize; // Grow upward from bottom
 
-                const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
-                sprite.setPosition(x, y);
-                this.capturedPiecesContainer.add(sprite);
-            });
+                    const sprite = this.createCapturedPieceSprite(pieceType, pieceSize);
+                    sprite.setPosition(x, y);
+                    this.capturedPiecesContainer.add(sprite);
+                });
+            }
         }
     }
 
     createCapturedPieceSprite(pieceType, pieceSize) {
         // Captured pieces are opponent's color
         const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
-        const colorPrefix = opponentColor === 'white' ? 'W' : 'B';
+        return this.createCapturedPieceSpriteForColor(pieceType, pieceSize, opponentColor);
+    }
+
+    createCapturedPieceSpriteForColor(pieceType, pieceSize, color) {
+        const colorPrefix = color === 'white' ? 'W' : 'B';
         const assetKey = `${colorPrefix}_${pieceType.charAt(0).toUpperCase() + pieceType.slice(1)}`;
 
         const sprite = this.add.image(0, 0, assetKey);
@@ -832,7 +862,19 @@ export default class GameScene extends Phaser.Scene {
         let playerWon = null;
 
         const opponentColor = this.playerColor === 'white' ? 'black' : 'white';
-        if (this.gameState.isCheckmate(this.playerColor)) {
+
+        // Check for king capture first (combat system victory)
+        if (this.gameState.isKingCaptured(this.playerColor)) {
+            titleText = 'DEFEAT';
+            subtitleText = `Your king was slain!`;
+            titleColor = '#ff4444';
+            playerWon = false;
+        } else if (this.gameState.isKingCaptured(opponentColor)) {
+            titleText = 'VICTORY';
+            subtitleText = `Enemy king slain!`;
+            titleColor = '#ffd700';
+            playerWon = true;
+        } else if (this.gameState.isCheckmate(this.playerColor)) {
             titleText = 'DEFEAT';
             subtitleText = `Checkmate - ${opponentColor.charAt(0).toUpperCase() + opponentColor.slice(1)} wins`;
             titleColor = '#ff4444';

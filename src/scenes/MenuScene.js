@@ -16,10 +16,10 @@ export default class MenuScene extends Phaser.Scene {
 
         // Difficulty config with character portraits
         this.difficulties = [
-            { name: 'Easy', key: 'easy', char: 'char_kid', portrait: 'char_kid_portrait' },
-            { name: 'Medium', key: 'medium', char: 'char_adult', portrait: 'char_adult_portrait' },
-            { name: 'Hard', key: 'hard', char: 'char_warrior', portrait: 'char_warrior_portrait' },
-            { name: 'Expert', key: 'expert', char: 'char_expert', portrait: 'char_expert_portrait' }
+            { name: 'Easy', key: 'easy', char: 'char_kid_portrait', portrait: 'char_kid_portrait' },
+            { name: 'Medium', key: 'medium', char: 'char_adult_portrait', portrait: 'char_adult_portrait' },
+            { name: 'Hard', key: 'hard', char: 'char_warrior_portrait', portrait: 'char_warrior_portrait' },
+            { name: 'Expert', key: 'expert', char: 'char_expert_portrait', portrait: 'char_expert_portrait' }
         ];
 
         // Show color selection first

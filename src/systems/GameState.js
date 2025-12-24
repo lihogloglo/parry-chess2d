@@ -2,11 +2,16 @@ import { Chess } from 'chess.js';
 
 /**
  * GameState - Pure chess logic, no rendering dependencies
- * Ported from 3D version with minimal changes
+ *
+ * DESIGN PRINCIPLE: chess.js is the single source of truth for game state.
+ * - Turn management: chess.turn() (not a separate currentPlayer field)
+ * - Board position: chess.fen()
+ * - Move validation: chess.moves() and chess.move()
+ *
+ * The visual board (Board.js) mirrors the chess.js state.
  */
 export class GameState {
     constructor() {
-        this.currentPlayer = 'white';
         this.inCombat = false;
         this.moveHistory = [];
         this.capturedPieces = { white: [], black: [] };
@@ -14,7 +19,7 @@ export class GameState {
         // Board reference (set by GameScene)
         this.board = null;
 
-        // Initialize chess.js engine for move validation
+        // chess.js is the single source of truth
         this.chess = new Chess();
     }
 
@@ -23,15 +28,17 @@ export class GameState {
     }
 
     reset() {
-        this.currentPlayer = 'white';
         this.inCombat = false;
         this.moveHistory = [];
         this.capturedPieces = { white: [], black: [] };
         this.chess.reset();
     }
 
-    switchTurn() {
-        this.currentPlayer = this.currentPlayer === 'white' ? 'black' : 'white';
+    /**
+     * Get the current player's turn - derived from chess.js (single source of truth)
+     */
+    get currentPlayer() {
+        return this.chess.turn() === 'w' ? 'white' : 'black';
     }
 
     // Convert our row/col format to chess.js algebraic notation
@@ -96,7 +103,26 @@ export class GameState {
     }
 
     isGameOver() {
+        // Check if a king was captured (combat system allows king capture)
+        if (this.isKingCaptured('white') || this.isKingCaptured('black')) {
+            return true;
+        }
         return this.chess.isGameOver();
+    }
+
+    isKingCaptured(color) {
+        // Check if the king of this color has been captured
+        return this.capturedPieces[color === 'white' ? 'black' : 'white'].includes('king');
+    }
+
+    getWinner() {
+        // Returns the color of the winner, or null if no winner yet
+        if (this.isKingCaptured('white')) return 'black';
+        if (this.isKingCaptured('black')) return 'white';
+        if (this.chess.isCheckmate()) {
+            return this.chess.turn() === 'w' ? 'black' : 'white';
+        }
+        return null;
     }
 
     recordCapture(piece) {
@@ -137,36 +163,40 @@ export class GameState {
         return moves;
     }
 
-    // UNIFIED TURN MANAGEMENT - Single source of truth for all turn transitions
+    /**
+     * Complete a move after makeChessMove() has been called.
+     * NOTE: The turn has already been switched by chess.move() in makeChessMove().
+     * This function only handles capture bookkeeping.
+     *
+     * @param {Object} options - { capturedPiece: piece object or null }
+     */
     completeMove(options = {}) {
         const { capturedPiece = null } = options;
 
-        // Record any captures
         if (capturedPiece) {
             this.recordCapture(capturedPiece);
         }
 
-        // Switch turn
-        this.switchTurn();
-
-        // Sync chess.js with visual board state
-        const success = this.syncChessJsWithBoard();
-
-        if (!success) {
-            console.error('Failed to sync chess.js with board state');
-            this.reconstructFEN();
-        }
-
-        return success;
+        // Turn is already switched by chess.js in makeChessMove()
+        // No need to call switchTurn() or sync FEN here
     }
 
-    // Sync chess.js engine with current visual board state
-    syncChessJsWithBoard() {
-        return this.reconstructFEN();
+    /**
+     * Sync chess.js with visual board state after combat divergence.
+     * Call this ONLY when the board state differs from what chess.js expects
+     * (e.g., defender won and captured the attacker instead).
+     *
+     * @param {string} nextTurn - 'white' or 'black' - whose turn it should be after sync
+     */
+    syncChessJsWithBoard(nextTurn) {
+        return this.reconstructFEN(nextTurn);
     }
 
-    // Reconstruct FEN from current visual board state
-    reconstructFEN() {
+    /**
+     * Reconstruct FEN from current visual board state.
+     * @param {string} nextTurn - 'white' or 'black' - whose turn it should be
+     */
+    reconstructFEN(nextTurn) {
         if (!this.board) return false;
 
         const pieces = [];
@@ -206,7 +236,7 @@ export class GameState {
         }
 
         const boardFEN = fenRows.join('/');
-        const turn = this.currentPlayer === 'white' ? 'w' : 'b';
+        const turn = nextTurn === 'white' ? 'w' : 'b';
 
         // Reconstruct castling rights
         const castling = this.getCastlingRights(pieces);
@@ -219,14 +249,12 @@ export class GameState {
         const oldFen = this.chess.fen();
         const oldParts = oldFen.split(' ');
         let fullmove = parseInt(oldParts[5]) || 1;
-        if (turn === 'w') {
-            fullmove++;
-        }
 
         const newFen = `${boardFEN} ${turn} ${castling} ${enPassant} ${halfmove} ${fullmove}`;
 
         try {
             this.chess.load(newFen);
+            console.log(`GameState: Synced FEN to ${newFen}`);
             return true;
         } catch (error) {
             console.error('Failed to load reconstructed FEN:', error, newFen);

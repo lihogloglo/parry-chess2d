@@ -1,6 +1,8 @@
 /**
  * StockfishAI - Chess AI opponent using Stockfish engine
- * Ported from 3D version with minor path adjustments
+ *
+ * DESIGN PRINCIPLE: chess.js FEN is the single source of truth.
+ * This class never modifies FEN - it just reads and responds to it.
  */
 export class StockfishAI {
     constructor(gameState, difficulty = 'medium') {
@@ -17,26 +19,23 @@ export class StockfishAI {
 
         // Difficulty settings - using time-based search for more consistent performance
         // moveTime is in milliseconds - how long Stockfish is allowed to think
+        // Note: AI parry behavior is controlled by GameConfig.DIFFICULTY_SETTINGS via CombatSystem
         this.difficultySettings = {
             easy: {
                 skillLevel: 1,
-                moveTime: 200,      // 200ms thinking time
-                parryAccuracy: 0.30
+                moveTime: 200       // 200ms thinking time
             },
             medium: {
                 skillLevel: 5,
-                moveTime: 500,      // 500ms thinking time
-                parryAccuracy: 0.60
+                moveTime: 500       // 500ms thinking time
             },
             hard: {
                 skillLevel: 10,
-                moveTime: 1000,     // 1 second thinking time
-                parryAccuracy: 0.80
+                moveTime: 1000      // 1 second thinking time
             },
             expert: {
                 skillLevel: 20,
-                moveTime: 2000,     // 2 seconds thinking time
-                parryAccuracy: 0.95
+                moveTime: 2000      // 2 seconds thinking time
             }
         };
     }
@@ -127,39 +126,66 @@ export class StockfishAI {
         }
     }
 
-    async getBestMove(color) {
+    /**
+     * Get the best move for the current position.
+     * IMPORTANT: This reads the turn from chess.js FEN - no color parameter needed.
+     * The FEN is the single source of truth.
+     */
+    async getBestMove() {
+        const fen = this.gameState.chess.fen();
+        const currentTurn = this.gameState.chess.turn() === 'w' ? 'white' : 'black';
+
         if (this.useFallback) {
-            return this.getFallbackMove(color);
+            return this.getFallbackMove(currentTurn);
         }
 
         if (!this.engineReady) {
             await this.waitForEngine();
 
             if (!this.engineReady) {
-                return this.getFallbackMove(color);
+                return this.getFallbackMove(currentTurn);
             }
         }
 
-        return new Promise((resolve) => {
-            const fen = this.gameState.chess.fen();
-            const settings = this.difficultySettings[this.difficulty];
+        // Cancel any pending search
+        this.sendCommand('stop');
 
-            this.sendCommand('position fen ' + fen);
-            // Use time-based search for consistent, predictable performance
-            this.sendCommand(`go movetime ${settings.moveTime}`);
+        return new Promise((resolve) => {
+            const settings = this.difficultySettings[this.difficulty];
+            let resolved = false;
+            let timeoutId = null;
+
+            console.log(`StockfishAI: Getting move for ${currentTurn}, FEN: ${fen}`);
 
             this.currentCallback = (moveStr, promotionChar) => {
-                const move = this.convertStockfishMove(moveStr, promotionChar);
-                resolve(move);
+                if (resolved) return; // Prevent double-resolve
+                resolved = true;
+                if (timeoutId) clearTimeout(timeoutId);
+                this.currentCallback = null;
+
+                const move = this.convertStockfishMove(moveStr, promotionChar, currentTurn);
+                if (!move) {
+                    console.error('convertStockfishMove returned null, using fallback');
+                    resolve(this.getFallbackMove(currentTurn));
+                } else {
+                    resolve(move);
+                }
             };
 
-            // Timeout fallback
-            setTimeout(() => {
-                if (this.currentCallback) {
-                    this.currentCallback = null;
-                    resolve(this.getFallbackMove(color));
-                }
-            }, 10000);
+            // Send the position and search command
+            this.sendCommand('position fen ' + fen);
+            this.sendCommand(`go movetime ${settings.moveTime}`);
+
+            // Timeout fallback - give extra buffer over moveTime
+            const timeoutMs = settings.moveTime + 5000;
+            timeoutId = setTimeout(() => {
+                if (resolved) return;
+                resolved = true;
+                console.warn(`StockfishAI: Timeout after ${timeoutMs}ms, using fallback move`);
+                this.currentCallback = null;
+                this.sendCommand('stop'); // Stop the search
+                resolve(this.getFallbackMove(currentTurn));
+            }, timeoutMs);
         });
     }
 
@@ -170,16 +196,27 @@ export class StockfishAI {
         }
     }
 
-    convertStockfishMove(moveStr, promotionChar = null) {
+    convertStockfishMove(moveStr, promotionChar = null, color = null) {
         const fromCol = moveStr.charCodeAt(0) - 'a'.charCodeAt(0);
         const fromRow = 8 - parseInt(moveStr[1]);
         const toCol = moveStr.charCodeAt(2) - 'a'.charCodeAt(0);
         const toRow = 8 - parseInt(moveStr[3]);
 
+        console.log(`StockfishAI: Converting move ${moveStr} for ${color}`);
+        console.log(`  from: (${fromRow}, ${fromCol}) to: (${toRow}, ${toCol})`);
+
         const piece = this.gameState.board?.getPieceAt(fromRow, fromCol);
 
         if (!piece) {
-            console.error('No piece found at source position:', fromRow, fromCol);
+            console.error(`StockfishAI: No piece at (${fromRow}, ${fromCol})`);
+            this.debugBoardState(color);
+            return null;
+        }
+
+        // Validate the piece is the correct color
+        if (color && piece.color !== color) {
+            console.error(`StockfishAI: Piece at (${fromRow}, ${fromCol}) is ${piece.color}, expected ${color}`);
+            this.debugBoardState(color);
             return null;
         }
 
@@ -196,23 +233,56 @@ export class StockfishAI {
         };
     }
 
+    debugBoardState(expectedColor) {
+        console.log('=== BOARD STATE DEBUG ===');
+        console.log('FEN:', this.gameState.chess.fen());
+        console.log('chess.js turn:', this.gameState.chess.turn());
+        console.log(`Expected color: ${expectedColor}`);
+        console.log('Pieces on board:');
+        this.gameState.board?.pieces?.forEach(p => {
+            console.log(`  ${p.color} ${p.type} at (${p.position.row}, ${p.position.col})`);
+        });
+        console.log('=========================');
+    }
+
     getFallbackMove(color) {
         const allMoves = this.gameState.getAllValidMoves(color);
         if (allMoves.length === 0) return null;
 
-        // Simple evaluation: prioritize captures and center control
+        const board = this.gameState.board;
+
+        // Evaluate moves considering parry/combat system
         const evaluatedMoves = allMoves.map(move => {
             let score = 0;
 
+            const targetPiece = board?.getPieceAt(move.to.row, move.to.col);
+
             // Check if it's a capture
-            const targetPiece = this.gameState.board?.getPieceAt(move.to.row, move.to.col);
             if (targetPiece && targetPiece.color !== color) {
                 const pieceValues = { pawn: 1, knight: 3, bishop: 3, rook: 5, queen: 9, king: 100 };
-                score += pieceValues[targetPiece.type] * 10;
+                const baseValue = pieceValues[targetPiece.type] * 10;
 
-                // Bonus for capturing pieces with broken posture
-                if (targetPiece.isPostureBroken?.()) {
-                    score += 50;
+                // Parry-aware evaluation
+                const targetParriesLeft = board.getParriesRemaining(targetPiece);
+                const targetPostureBroken = board.isPostureBroken(targetPiece);
+
+                if (targetPostureBroken) {
+                    // Broken posture = guaranteed capture, high priority
+                    score += baseValue * 3;
+                } else if (targetParriesLeft === 0) {
+                    // No parries left = easier to capture
+                    score += baseValue * 2;
+                } else {
+                    // Has parries - capture is risky, reduce priority
+                    // But still consider piece value
+                    score += baseValue * 0.5;
+                }
+
+                // Prefer attacking with expendable pieces when target can parry
+                if (targetParriesLeft > 0) {
+                    const attackerValue = pieceValues[move.piece.type];
+                    // Penalty for risking high-value pieces against defended targets
+                    score -= attackerValue * 2;
                 }
             }
 
@@ -221,7 +291,7 @@ export class StockfishAI {
                 score += 3;
             }
 
-            // Random factor for variety
+            // Small random factor for variety
             score += Math.random() * 2;
 
             return { move, score };
@@ -229,16 +299,6 @@ export class StockfishAI {
 
         evaluatedMoves.sort((a, b) => b.score - a.score);
         return evaluatedMoves[0].move;
-    }
-
-    calculateParryTiming(perfectParryTime, perfectParryWindow) {
-        const settings = this.difficultySettings[this.difficulty];
-        const accuracy = settings.parryAccuracy;
-
-        const maxDeviation = perfectParryWindow * 2;
-        const deviation = maxDeviation * (1 - accuracy) * (Math.random() - 0.5) * 2;
-
-        return perfectParryTime + deviation;
     }
 
     dispose() {

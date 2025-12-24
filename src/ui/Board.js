@@ -1,5 +1,4 @@
-import Phaser from 'phaser';
-import { POSTURE_LIMITS } from '../data/CombatData.js';
+import { POSTURE_LIMITS, PARRY_LIMITS } from '../config/GameConfig.js';
 
 /**
  * Board - 2D Chess board rendering and piece management
@@ -208,16 +207,6 @@ export class Board {
     }
 
     createPiece(type, color, row, col) {
-        // Parry limits: how many times a piece can parry in the game
-        const PARRY_LIMITS = {
-            pawn: 1,
-            knight: 2,
-            bishop: 2,
-            rook: 3,
-            queen: 4,
-            king: 999  // King has unlimited parries
-        };
-
         const piece = {
             type,
             color,
@@ -424,6 +413,15 @@ export class Board {
 
     reset() {
         this.clearHighlights();
+        this.setupInitialPosition();
+    }
+
+    clearPieces() {
+        this.pieces.forEach(p => p.sprite?.destroy());
+        this.pieces = [];
+    }
+
+    setupPieces() {
         this.setupInitialPosition();
     }
 

@@ -59,6 +59,19 @@ export const POSTURE_LIMITS = {
     king: 999   // King cannot be posture-broken (checkmate wins instead)
 };
 
+/**
+ * Parry limits: how many times a piece can parry in the game
+ * Once exhausted, piece cannot defend against captures
+ */
+export const PARRY_LIMITS = {
+    pawn: 1,
+    knight: 2,
+    bishop: 2,
+    rook: 3,
+    queen: 4,
+    king: 999   // King has unlimited parries
+};
+
 // =============================================================================
 // TIMING WINDOWS (in milliseconds)
 // =============================================================================
@@ -419,11 +432,4 @@ export function getAIParrySettings(difficulty) {
         parryChance: settings.aiParryChance,
         perfectParryChance: settings.aiPerfectParryChance
     };
-}
-
-/**
- * Get posture limit for a piece type
- */
-export function getPostureLimit(pieceType) {
-    return POSTURE_LIMITS[pieceType] ?? 3;
 }

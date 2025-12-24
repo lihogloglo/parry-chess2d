@@ -27,26 +27,3 @@ export const VFX_PARAMS = {
     missedParry: VFX.missedParry,
     telegraph: VFX.telegraph
 };
-
-// Sound effect keys (for Phaser audio system)
-export const SOUND_KEYS = {
-    telegraph: {
-        pawn: 'telegraph_light',
-        knight: 'telegraph_swift',
-        bishop: 'telegraph_medium',
-        rook: 'telegraph_heavy',
-        queen: 'telegraph_deadly',
-        king: 'telegraph_royal',
-    },
-
-    clash: {
-        perfect: 'parry_perfect',
-        normal: 'parry_normal',
-        missed: 'parry_missed',
-    },
-
-    attack: {
-        whoosh: 'attack_whoosh',
-        impact: 'attack_impact',
-    },
-};

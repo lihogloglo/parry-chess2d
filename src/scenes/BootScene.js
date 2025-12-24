@@ -57,11 +57,6 @@ export default class BootScene extends Phaser.Scene {
         this.load.audio('sfx_defeat', 'assets/sounds/defeat.mp3');
 
         // Load character portraits (matching difficulty levels)
-        this.load.image('char_kid', 'assets/characters/kid_portrait.png');
-        this.load.image('char_adult', 'assets/characters/adult_portrait.png');
-        this.load.image('char_warrior', 'assets/characters/warrior_portrait.png');
-        this.load.image('char_expert', 'assets/characters/expert_portrait.png');
-        // Portrait keys (same images, for consistency)
         this.load.image('char_kid_portrait', 'assets/characters/kid_portrait.png');
         this.load.image('char_adult_portrait', 'assets/characters/adult_portrait.png');
         this.load.image('char_warrior_portrait', 'assets/characters/warrior_portrait.png');
